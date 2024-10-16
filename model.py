@@ -2,6 +2,8 @@
 import tensorflow as tf
 import keras
 from keras import layers
+from dataclasses import dataclass
+from dynamic_dict import DynamicDict
 
 
 
@@ -68,4 +70,32 @@ class Block(keras.Model):
         x = x + self.mlp(self.ln_2(x))
         return x
 
+
+@dataclass
+class GPTConfig:
+    block_size: int = 512
+    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    n_layer: int = 4
+    n_head: int = 4
+    n_embd: int = 128
+    dropout: float = 0.0
+    bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+
+
+class GPT:
+
+    def __init__(self, config):
+
+        assert config.vocab_size is not None
+        assert config.block_size is not None
+        self.config = config
+
+        self.transformer = DynamicDict(dict(
+            wte = layers.Embedding(input_dim=config.vocab_size, output_dim=config.n_embd),
+            wpe = layers.Embedding(input_dim=config.block_size, output_dim=config.n_embd),
+            drop = layers.Dropout(config.dropout),
+            h = [Block(config) for _ in range(config.n_layer)],
+            ln_f = LayerNorm(config.n_embd, use_bias=config.bias),
+            lm_head = layers.Dense(config.vocab_size, use_bias=False),
+        ))
 
