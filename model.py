@@ -108,12 +108,12 @@ class GPTModel(keras.Model):
             wte = layers.Embedding(input_dim=config.vocab_size, output_dim=config.n_embd),
             wpe = layers.Embedding(input_dim=config.block_size, output_dim=config.n_embd),
             drop = layers.Dropout(config.dropout),
-            h = [ Block(config)
-                    for _ in range(
+            h = [ Block(
                         embed_dim = config.n_embd,
                         n_heads = config.n_head,
                         use_bias = config.bias,
                         dropout = config.dropout)
+                    for _ in range(config.n_layer)
                 ],
             ln_f = LayerNorm(config.n_embd, use_bias=config.bias)
         ))
