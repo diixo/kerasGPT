@@ -6,7 +6,7 @@ import keras.backend as K
 from keras import layers
 from dataclasses import dataclass
 from dynamic_dict import DynamicDict
-
+from keras.initializers import RandomNormal
 
 
 """ 
@@ -115,7 +115,7 @@ class GPTConfig:
 """
 class GPTModel(keras.Model):
 
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
@@ -128,10 +128,18 @@ class GPTModel(keras.Model):
             h = [ Block(config)
                     for _ in range(config.n_layer)
                 ],
-            ln_f = LayerNorm(config.n_embd, use_bias=config.bias),
-            lm_head = layers.Dense(config.vocab_size, use_bias=False),
+            ln_f = LayerNorm(config.n_embd, use_bias=config.bias)
         ))
 
+
+        # в финальном слое не ставим activation="softmax", так как используем режим top_k
+        # и отбираем нужный токен уже на выходе при генерации
+        self.lm_head = layers.Dense(
+            config.vocab_size,
+            use_bias=False,
+            kernel_initializer=RandomNormal(mean=0.0, stddev=0.02))
+
+        # начальная инициализация эмбеддингов, можно присваивать так как у них одинаковые размеры
         self.transformer.wte.embeddings = self.lm_head.kernel
         # force initialization
         for block in self.transformer.h: block.init_weight()
@@ -139,18 +147,26 @@ class GPTModel(keras.Model):
 
     def call(self, idx, targets=None):
 
-        b, t = tf.shape(idx)[0], tf.shape(idx)[1] # shape(batch_size, sequence_length)
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        # TokenAndPositionEmbeddings -->>
+        batch_sz, maxlen = tf.shape(idx)[0], tf.shape(idx)[1] # shape(batch_size, max_len)
+        assert maxlen <= self.config.block_size, f"Cannot forward sequence of length {maxlen}, block size is only {self.config.block_size}"
         
-        pos = tf.range(0, t, dtype=tf.int32)    # shape (t)
+        pos = tf.range(0, maxlen, delta=1, dtype=tf.int32)    # shape (t)
 
         tok_emb = self.transformer.wte(idx)     # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos)     # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+
+        # поэлементное сложение токенов и позиционных эмбеддингов,
+        # чтобы учитывать как значения токенов, так и их позиции в последовательности.
+        # Это важно, так как информация о позиции токена влияет на понимание контекста.
+        # И дропаут для регуляризации, чтобы предотвратить переобучение модели и повысить устойчивость.
+        x = self.transformer.drop(tok_emb + pos_emb, training=True)
+        # <<--
 
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, training=True)
 
+        # feed-forward final
         x = self.transformer.ln_f(x)
 
         if targets is not None:
