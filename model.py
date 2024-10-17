@@ -9,10 +9,9 @@ from dynamic_dict import DynamicDict
 
 
 """ layer: LayerNorm with optional bias"""
-class LayerNorm(layers.Layer):
+class LayerNorm():
 
     def __init__(self, ndim, use_bias=True):
-        super().__init__()
         self.weight = self.add_weight(
             shape=(ndim,), initializer="ones", trainable=True
         )
@@ -24,7 +23,8 @@ class LayerNorm(layers.Layer):
         self.epsilon = 1e-5
 
 
-    def call(self, inputs):
+    # training flag is don't care
+    def call(self, inputs, training=False):
         mean = tf.reduce_mean(inputs, axis=-1, keepdims=True)
         variance = tf.reduce_mean(tf.square(inputs - mean), axis=-1, keepdims=True)
         normalized_inputs = (inputs - mean) / tf.sqrt(variance + self.epsilon)
@@ -35,40 +35,64 @@ class LayerNorm(layers.Layer):
         return output
 
 
-class MLP(keras.Model):
+class MLP():
 
     def __init__(self, n_embd, use_bias, dropout=0.1):
-        super().__init__()
         self.fc = layers.Dense(4 * n_embd, use_bias=use_bias)
         self.gelu = layers.Activation(keras.activations.gelu)
         self.proj = layers.Dense(n_embd, use_bias=use_bias)
         self.dropout = layers.Dropout(dropout)
 
-    def call(self, x):
+
+    def call(self, x, training=False):
         x = self.fc(x)
         x = self.gelu(x)
         x = self.proj(x)
-        x = self.dropout(x)
+        x = self.dropout(x, training=training)
         return x
+
+    
+    def init_weights(self):
+        if isinstance(self.fc, keras.layers.Dense):
+            initializer = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
+            self.fc.build((None, self.fc.units))  # used 4 * n_embd
+            self.fc.kernel.assign(initializer(self.fc.kernel.shape))
+            
+            if self.fc.bias is not None:
+                bias_initializer = keras.initializers.Zeros()
+                self.fc.bias.assign(bias_initializer(self.fc.bias.shape))
+        
+        if isinstance(self.proj, keras.layers.Dense):
+            initializer = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
+            self.proj.build((None, self.proj.units))  # used n_embd
+            self.proj.kernel.assign(initializer(self.proj.kernel.shape))
+            
+            if self.proj.bias is not None:
+                bias_initializer = keras.initializers.Zeros()
+                self.proj.bias.assign(bias_initializer(self.proj.bias.shape))
+
 
 
 """
 ## Implement a Transformer block as a layer
 """
-class Block(keras.Model):
+class Block():
 
     def __init__(self, embed_dim, num_heads, dropout=0.1):
-        super().__init__()
         self.ln_1 = LayerNorm(ndim=embed_dim, use_bias=True)
         self.attn = layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim, dropout=dropout)
         self.ln_2 = LayerNorm(ndim=embed_dim, use_bias=True)
         self.mlp = MLP(n_embd=embed_dim, use_bias=True, dropout=dropout) # ff_dim = 4*embed_dim
 
-    def call(self, x):
-        attn_output = self.attn(self.ln_1(x), self.ln_1(x))
+
+    def call(self, x, training=False):
+        attn_output = self.attn(self.ln_1(x), self.ln_1(x), training=training)
         x = x + attn_output
-        x = x + self.mlp(self.ln_2(x))
+        x = x + self.mlp(self.ln_2(x), training)
         return x
+    
+    def init_weights(self):
+        self.mlp.init_weights()
 
 
 @dataclass
@@ -102,20 +126,11 @@ class GPT:
         ))
 
         self.transformer.wte.embeddings = self.lm_head.kernel
-
-        self._init_weights()
-
-
-    def _init_weights(self):
-        for layer in self.layers:
-            if isinstance(layer, layers.Dense):
-                std = 0.02 / math.sqrt(2 * self.config.n_layer)
-                layer.kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=std)
-            elif isinstance(layer, layers.Embedding):
-                layer.embeddings_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
+        # force initialization
+        for block in self.transformer.h: block.init_weight()
 
 
-    def forward(self, idx, targets=None):
+    def call(self, idx, targets=None):
 
         b, t = tf.shape(idx)[0], tf.shape(idx)[1]
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
