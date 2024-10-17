@@ -88,7 +88,7 @@ class GPTConfig:
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 (and 48) for efficiency
     n_layer: int = 4
     n_head: int = 4
-    n_embd: int = 128
+    n_embd: int = 64
     dropout: float = 0.1
     bias: bool = True   # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
@@ -163,6 +163,16 @@ class GPTModel(keras.Model):
             loss = None
 
         return logits, loss
+
+
+    def configure_optimizers(self, learning_rate, weight_decay = 0.1):
+        betas = (0.9, 0.985)
+        optimizer = tf.keras.optimizers.AdamW(
+            learning_rate=learning_rate,
+            beta_1=betas[0],
+            beta_2=betas[1],
+            weight_decay=weight_decay)
+        return optimizer
 
 
     """
