@@ -201,7 +201,6 @@ class GPTModel(keras.Model):
                 _, idx_next = tf.math.top_k(probs, k=1, sorted=False)
 
             idx = tf.concat([idx, idx_next], axis=1)
-
         return idx
 
 
