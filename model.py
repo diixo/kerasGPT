@@ -41,9 +41,9 @@ class LayerNorm():
 class MLP():
 
     def __init__(self, n_embd, use_bias, dropout=0.1):
-        self.fc = layers.Dense(4 * n_embd, use_bias=use_bias)
+        self.fc = layers.Dense(4 * n_embd, use_bias=use_bias, kernel_initializer = RandomNormal(mean=0.0, stddev=0.02))
         self.gelu = layers.Activation(keras.activations.gelu)
-        self.proj = layers.Dense(n_embd, use_bias=use_bias)
+        self.proj = layers.Dense(n_embd, use_bias=use_bias, kernel_initializer = RandomNormal(mean=0.0, stddev=0.02))
         self.dropout = layers.Dropout(dropout)
 
 
@@ -54,27 +54,6 @@ class MLP():
         x = self.dropout(x, training=training)
         return x
 
-    
-    # special scaled init to the residual projections, per GPT-2 paper
-    def init_weights(self):
-        if isinstance(self.fc, keras.layers.Dense):
-            initializer = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
-            self.fc.build((None, self.fc.units))  # used 4 * n_embd
-            self.fc.kernel.assign(initializer(self.fc.kernel.shape))
-            
-            if self.fc.bias is not None:
-                bias_initializer = keras.initializers.Zeros()
-                self.fc.bias.assign(bias_initializer(self.fc.bias.shape))
-        
-        if isinstance(self.proj, keras.layers.Dense):
-            initializer = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
-            self.proj.build((None, self.proj.units))  # used n_embd
-            self.proj.kernel.assign(initializer(self.proj.kernel.shape))
-            
-            if self.proj.bias is not None:
-                bias_initializer = keras.initializers.Zeros()
-                self.proj.bias.assign(bias_initializer(self.proj.bias.shape))
-
 
 
 """
@@ -82,11 +61,15 @@ class MLP():
 """
 class Block():
 
-    def __init__(self, embed_dim, num_heads, dropout=0.1):
-        self.ln_1 = LayerNorm(ndim=embed_dim, use_bias=True)
-        self.attn = layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim, dropout=dropout)
-        self.ln_2 = LayerNorm(ndim=embed_dim, use_bias=True)
-        self.mlp = MLP(n_embd=embed_dim, use_bias=True, dropout=dropout) # ff_dim = 4*embed_dim
+    def __init__(self, embed_dim, num_heads, use_bias, dropout=0.1):
+        self.ln_1 = LayerNorm(ndim=embed_dim, use_bias=use_bias)
+        self.attn = layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=embed_dim,
+            dropout=dropout,
+            kernel_initializer=RandomNormal(mean=0.0, stddev=0.02))
+        self.ln_2 = LayerNorm(ndim=embed_dim, use_bias=use_bias)
+        self.mlp = MLP(n_embd=embed_dim, use_bias=use_bias, dropout=dropout) # ff_dim = 4*embed_dim
 
 
     def call(self, x, training=False):
@@ -106,7 +89,7 @@ class GPTConfig:
     n_layer: int = 4
     n_head: int = 4
     n_embd: int = 128
-    dropout: float = 0.0
+    dropout: float = 0.1
     bias: bool = True   # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
 
@@ -126,7 +109,11 @@ class GPTModel(keras.Model):
             wpe = layers.Embedding(input_dim=config.block_size, output_dim=config.n_embd),
             drop = layers.Dropout(config.dropout),
             h = [ Block(config)
-                    for _ in range(config.n_layer)
+                    for _ in range(
+                        embed_dim = config.n_embd,
+                        n_heads = config.n_head,
+                        use_bias = config.bias,
+                        dropout = config.dropout)
                 ],
             ln_f = LayerNorm(config.n_embd, use_bias=config.bias)
         ))
@@ -141,8 +128,7 @@ class GPTModel(keras.Model):
 
         # начальная инициализация эмбеддингов, можно присваивать так как у них одинаковые размеры
         self.transformer.wte.embeddings = self.lm_head.kernel
-        # force initialization
-        for block in self.transformer.h: block.init_weight()
+
 
 
     def call(self, idx, targets=None):
