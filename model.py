@@ -1,4 +1,5 @@
 
+import math
 import tensorflow as tf
 import keras
 from keras import layers
@@ -17,8 +18,7 @@ class LayerNorm(layers.Layer):
         )
         if use_bias:
             self.bias = self.add_weight(
-                shape=(ndim,), initializer="zeros", trainable=True
-            )
+                shape=(ndim,), initializer="zeros", trainable=True)
         else:
             self.bias = None
         self.epsilon = 1e-5
@@ -79,7 +79,7 @@ class GPTConfig:
     n_head: int = 4
     n_embd: int = 128
     dropout: float = 0.0
-    bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    bias: bool = True   # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
 
 class GPT:
@@ -94,8 +94,48 @@ class GPT:
             wte = layers.Embedding(input_dim=config.vocab_size, output_dim=config.n_embd),
             wpe = layers.Embedding(input_dim=config.block_size, output_dim=config.n_embd),
             drop = layers.Dropout(config.dropout),
-            h = [Block(config) for _ in range(config.n_layer)],
+            h = [ Block(config)
+                    for _ in range(config.n_layer)
+                ],
             ln_f = LayerNorm(config.n_embd, use_bias=config.bias),
             lm_head = layers.Dense(config.vocab_size, use_bias=False),
         ))
 
+        self.transformer.wte.embeddings = self.lm_head.kernel
+
+        self._init_weights()
+
+
+    def _init_weights(self):
+        for layer in self.layers:
+            if isinstance(layer, layers.Dense):
+                std = 0.02 / math.sqrt(2 * self.config.n_layer)
+                layer.kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=std)
+            elif isinstance(layer, layers.Embedding):
+                layer.embeddings_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
+
+
+    def forward(self, idx, targets=None):
+
+        b, t = tf.shape(idx)[0], tf.shape(idx)[1]
+        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        
+        pos = tf.range(0, t, dtype=tf.int32)    # shape (t)
+
+        tok_emb = self.transformer.wte(idx)     # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos)     # position embeddings of shape (t, n_embd)
+        x = self.transformer.drop(tok_emb + pos_emb)
+
+        for block in self.transformer.h:
+            x = block(x)
+
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            logits = self.lm_head(x)
+            loss = tf.keras.losses.sparse_categorical_crossentropy(targets, logits, from_logits=True)
+        else:
+            logits = self.lm_head(x[:, -1, :])
+            loss = None
+
+        return logits, loss
