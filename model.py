@@ -126,7 +126,7 @@ class GPTModel(keras.Model):
             use_bias=False,
             kernel_initializer=RandomNormal(mean=0.0, stddev=0.02))
 
-        # начальная инициализация эмбеддингов, можно присваивать так как у них одинаковые размеры
+        # начальная инициализация эмбеддингов, можно присваивать веса, так как у них одинаковые размеры
         self.transformer.wte.embeddings = self.lm_head.kernel
 
 
