@@ -1,1 +1,1 @@
-# numoGPT
+# kerasGPT
